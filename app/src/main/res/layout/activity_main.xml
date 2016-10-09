@@ -6,114 +6,60 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:animateLayoutChanges="true"
+    android:background="@color/background"
     tools:context="hu.krisztiaan.mobplayer.MainActivity">
 
-    <hu.krisztiaan.mobplayer.BubbleView
-        android:id="@+id/thetaBubble"
-        android:layout_width="100dp"
-        android:layout_height="100dp"
-        android:layout_alignParentBottom="true"
-        android:layout_alignParentLeft="true"
-        android:layout_alignParentStart="true"
-        android:layout_marginBottom="85dp"
-        android:layout_marginLeft="53dp"
-        android:layout_marginStart="53dp"
-        android:scaleX="0"
-        android:scaleY="0"/>
-
-    <hu.krisztiaan.mobplayer.BubbleView
-        android:id="@+id/gammaBubble"
-        android:layout_width="100dp"
-        android:layout_height="100dp"
-        android:layout_alignParentEnd="true"
-        android:layout_alignParentRight="true"
-        android:layout_alignParentTop="true"
-        android:layout_marginEnd="40dp"
-        android:layout_marginRight="40dp"
-        android:layout_marginTop="60dp"
-        android:scaleX="0"
-        android:scaleY="0"/>
-
-    <hu.krisztiaan.mobplayer.BubbleView
-        android:id="@+id/deltaBubble"
-        android:layout_width="100dp"
-        android:layout_height="100dp"
-        android:layout_above="@+id/thetaBubble"
-        android:layout_alignEnd="@+id/gammaBubble"
-        android:layout_alignRight="@+id/gammaBubble"
-        android:layout_marginBottom="16dp"
-        android:layout_marginEnd="27dp"
-        android:layout_marginRight="27dp"
-        android:scaleX="0"
-        android:scaleY="0"/>
-
-    <hu.krisztiaan.mobplayer.BubbleView
-        android:id="@+id/betaBubble"
-        android:layout_width="100dp"
-        android:layout_height="100dp"
-        android:layout_alignEnd="@+id/thetaBubble"
-        android:layout_alignRight="@+id/thetaBubble"
-        android:layout_below="@+id/gammaBubble"
-        android:layout_marginEnd="18dp"
-        android:layout_marginRight="18dp"
-        android:layout_marginTop="33dp"
-        android:scaleX="0"
-        android:scaleY="0"/>
-
-    <hu.krisztiaan.mobplayer.BubbleView
-        android:id="@+id/alphaBubble"
-        android:layout_width="100dp"
-        android:layout_height="100dp"
-        android:layout_alignBottom="@+id/gammaBubble"
-        android:layout_alignLeft="@+id/thetaBubble"
-        android:layout_alignStart="@+id/thetaBubble"
-        android:layout_marginBottom="20dp"
-        android:scaleX="0"
-        android:scaleY="0"/>
-
     <ImageView
-        android:id="@+id/imgPlay"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_alignTop="@+id/deltaBubble"
-        android:layout_centerHorizontal="true"
-        android:layout_marginTop="18dp"
-        android:onClick="onClick"
-        android:padding="12dp"
-        app:srcCompat="@android:drawable/ic_media_play"/>
-
-    <ImageView
-        android:id="@+id/imgStop"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_alignTop="@+id/deltaBubble"
-        android:layout_centerHorizontal="true"
-        android:layout_marginTop="18dp"
-        android:onClick="onClick"
-        android:padding="12dp"
-        android:visibility="gone"
-        app:srcCompat="@android:drawable/ic_media_pause"/>
-
-    <android.support.v7.widget.AppCompatSpinner
-        android:id="@+id/deviceSpinner"
+        android:id="@+id/imgDisplayGrad"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_below="@+id/txtInfo"
-        android:layout_toEndOf="@+id/imgStop"
-        android:layout_toRightOf="@+id/imgStop"/>
+        android:layout_height="match_parent"
+        android:src="#ddd"/>
+    <ImageView
+        android:id="@+id/musicBg"
+        android:layout_width="match_parent"
+        android:alpha=".1"
+        android:scaleType="centerCrop"
+        android:layout_height="match_parent"
+        android:src="@drawable/music_bg"/>
 
     <TextView
-        android:id="@+id/txtInfo"
+        android:id="@+id/txtInteractionInfo"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_centerHorizontal="true"
+        android:layout_marginLeft="12dp"
+        android:layout_marginRight="12dp"
+        android:gravity="center"
+        android:text="- wait for instructions -"
+        android:textColor="#777"
+        android:textSize="16sp"
+        android:layout_marginBottom="70dp"
+        android:layout_alignParentBottom="true"
+        android:layout_centerHorizontal="true"/>
+
+    <com.wang.avi.AVLoadingIndicatorView
+        android:id="@+id/avi"
+        style="@style/AVLoadingIndicatorView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="visible"
+        app:indicatorColor="#999"
+        app:indicatorName="BallTrianglePathIndicator"
         android:layout_centerVertical="true"
+        android:layout_centerHorizontal="true"/>
+
+    <TextView
+        android:id="@+id/txtStatusInfo"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
         android:layout_marginLeft="12dp"
         android:layout_marginRight="12dp"
         android:gravity="center"
         android:text="Welcome"
-        android:textAppearance="@style/TextAppearance.AppCompat.Body2"
-        android:textColor="@android:color/background_light"
-        android:textSize="22sp"/>
+        android:textColor="#555"
+        android:textSize="22sp"
+        android:layout_alignParentTop="true"
+        android:layout_alignStart="@+id/txtInteractionInfo"
+        android:layout_marginTop="150dp"/>
 
 </RelativeLayout>

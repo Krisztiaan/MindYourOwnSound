@@ -3,6 +3,7 @@ package hu.krisztiaan.mobplayer;
 import android.Manifest;
 import android.animation.Animator;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.media.MediaPlayer;
 import android.os.Bundle;
 import android.os.Handler;
@@ -11,13 +12,12 @@ import android.support.v4.app.ActivityCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
 import android.view.View;
-import android.widget.ArrayAdapter;
-import android.widget.Spinner;
+import android.widget.ImageView;
 import android.widget.TextView;
 
+import com.balysv.materialripple.MaterialRippleLayout;
 import com.choosemuse.libmuse.ConnectionState;
 import com.choosemuse.libmuse.Eeg;
-import com.choosemuse.libmuse.LibmuseVersion;
 import com.choosemuse.libmuse.Muse;
 import com.choosemuse.libmuse.MuseArtifactPacket;
 import com.choosemuse.libmuse.MuseConnectionListener;
@@ -27,7 +27,7 @@ import com.choosemuse.libmuse.MuseDataPacket;
 import com.choosemuse.libmuse.MuseDataPacketType;
 import com.choosemuse.libmuse.MuseListener;
 import com.choosemuse.libmuse.MuseManagerAndroid;
-import com.cleveroad.audiovisualization.AudioVisualization;
+import com.wang.avi.AVLoadingIndicatorView;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -39,16 +39,41 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
     public static final int TEMP_BUFFER_MAX = 1;
     public static final int CROSSFADE_TIME = 8000;
     public static final float CROSSFADE_SPEED = 0.01f;
+    public static final int RECONNECT_PROMPT = 3;
     private static final String TAG = "MainActivity";
     private final Handler handler = new Handler();
-    private final List<String> messageStack = new ArrayList<>();
+    private final List<String> displayInfoStack = new ArrayList<>();
     public ConnectionState connectionState = ConnectionState.UNKNOWN;
+    TextView txtStatusInfo;
+    ImageView imgDisplayGrad;
+    TextView txtInteractionInfo;
+    Handler connHandler;
     private MoodClassifier moodClassifier = new MoodClassifier(this);
-    private Double alphaValue;
-    private Double betaValue;
-    private Double deltaValue;
-    private Double gammaValue;
-    private Double thetaValue;
+    private Double alphaValue = 0d;
+    private Double betaValue = 0d;
+    private Double deltaValue = 0d;
+    private Double gammaValue = 0d;
+    private Double thetaValue = 0d;
+    /**
+     * The runnable that is used to update the UI at 60Hz.
+     * <p>
+     * We update the UI from this Runnable instead of in packet handlers
+     * because packets come in at high frequency -- 220Hz or more for raw EEG
+     * -- and it only makes sense to update the UI at about 60fps. The update
+     * functions do some string allocation, so this reduces our memory
+     * footprint and makes GC pauses less frequent/noticeable.
+     */
+    private final Runnable tickUi = new Runnable() {
+        @Override
+        public void run() {
+            float v = Double.valueOf(deltaValue + thetaValue).floatValue();
+            v /= 2;
+            if (v > 1) v = 1f;
+            if (v < 0) v = 0f;
+            animateBrainChange(v);
+            handler.postDelayed(tickUi, 1000 / 60);
+        }
+    };
     /**
      * The MuseManager is how you detect Muse headbands and receive notifications
      * when the list of available headbands changes.
@@ -69,105 +94,34 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
      * that extends MuseConnectionListener.
      */
     private ConnectionListener connectionListener;
-    /**
-     * The DataListener is how you will receive EEG (and other) data from the
-     * headband.
-     * <p>
-     * Note that DataListener is an inner class at the bottom of this file
-     * that extends MuseDataListener.
-     */
     private DataListener dataListener;
-    private boolean alphaStale;
-    private boolean betaStale;
-    private boolean deltaStale;
-    private boolean gammaStale;
-    //--------------------------------------
-    // UI Specific methods
-    private boolean thetaStale;
-    /**
-     * The runnable that is used to update the UI at 60Hz.
-     * <p>
-     * We update the UI from this Runnable instead of in packet handlers
-     * because packets come in at high frequency -- 220Hz or more for raw EEG
-     * -- and it only makes sense to update the UI at about 60fps. The update
-     * functions do some string allocation, so this reduces our memory
-     * footprint and makes GC pauses less frequent/noticeable.
-     */
-    private final Runnable tickUi = new Runnable() {
-        @Override
-        public void run() {
-            if (alphaStale) {
-                updateAlpha();
-            }
-            if (betaStale) {
-                updateBeta();
-            }
-            if (deltaStale) {
-                updateDelta();
-            }
-            if (gammaStale) {
-                updateGamma();
-            }
-            if (thetaStale) {
-                updateTheta();
-            }
-            handler.postDelayed(tickUi, 1000 / 60);
-        }
-    };
-    private boolean accelStale;
-    /**
-     * In the UI, the list of Muses you can connect to is displayed in a Spinner object for this example.
-     * This spinner adapter contains the MAC addresses of all of the headbands we have discovered.
-     */
-    private ArrayAdapter<String> spinnerAdapter;
-    /**
-     * It is possible to pause the data transmission from the headband.  This boolean tracks whether
-     * or not the data transmission is enabled as we allow the user to pause transmission in the UI.
-     */
-    private boolean dataTransmission = true;
     private boolean isGood = true;
-    private AudioVisualization audioVisualization;
     private List<MediaPlayer> mediaPlayers = new ArrayList<>();
-    private int mainMediaPlayer;
     private Map<MuseDataPacketType, Double> lastValues = new HashMap<>();
     private Map<MuseDataPacketType, List<Double>> tempBuffer = new HashMap<>();
+    private AVLoadingIndicatorView loadingIndicatorView;
     private boolean isPlaying = false;
-
-    private static String toS(Double d) {
-        return d == null ? "0" : String.valueOf(d);
-    }
+    private int reconnectCount = 0;
+    private String previousInterInfo = "";
+    private final Runnable connectRunnable = new Runnable() {
+        @Override
+        public void run() {
+            connect();
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-        // We need to set the context on MuseManagerAndroid before we can do anything.
-        // This must come before other LibMuse API calls as it also loads the library.
         manager = MuseManagerAndroid.getInstance();
         manager.setContext(this);
-
-        Log.i(TAG, "LibMuse version=" + LibmuseVersion.instance().getString());
-
         WeakReference<MainActivity> weakActivity =
                 new WeakReference<MainActivity>(this);
-        // Register a listener to receive connection state changes.
         connectionListener = new ConnectionListener(weakActivity);
-        // Register a listener to receive data from a Muse.
         dataListener = new DataListener(weakActivity);
-        // Register a listener to receive notifications of what Muse headbands
-        // we can connect to.
-        manager.setMuseListener(new MuseL(weakActivity));
-
-        // Muse 2016 (MU-02) headbands use Bluetooth Low Energy technology to
-        // simplify the connection process.  This requires access to the COARSE_LOCATION
-        // or FINE_LOCATION permissions.  Make sure we have these permissions before
-        // proceeding.
+        manager.setMuseListener(new MuseL());
         ensurePermissions();
-
-        // Load and initialize our UI.
         initUI();
-
-        // Start our asynchronous updates of the UI.
         handler.post(tickUi);
     }
 
@@ -179,15 +133,10 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
 
     protected void onPause() {
         super.onPause();
-        // It is important to call stopListening when the Activity is paused
-        // to avoid a resource leak from the LibMuse library.
         manager.stopListening();
     }
 
     private void searchDevices() {
-        // The user has pressed the "Refresh" button.
-        // Start listening for nearby or paired Muse headbands. We call stopListening
-        // first to make sure startListening will clear the list of headbands and start fresh.
         manager.stopListening();
         manager.startListening();
     }
@@ -197,13 +146,13 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
         manager.stopListening();
 
         List<Muse> availableMuses = manager.getMuses();
-        Spinner musesSpinner = (Spinner) findViewById(R.id.deviceSpinner);
+//        Spinner musesSpinner = (Spinner) findViewById(R.id.deviceSpinner);
 
         // Check that we actually have something to connect to.
-        if (availableMuses.size() < 1 || musesSpinner.getAdapter().getCount() < 1) {
-            Log.w(TAG, "There is nothing to connect to");
+        if (availableMuses.size() < 1) {
+            showInteractionInfo("- pair and turn on the muse -");
         } else {
-            muse = availableMuses.get(musesSpinner.getSelectedItemPosition());
+            muse = availableMuses.get(0);
             muse.unregisterAllListeners();
             muse.registerConnectionListener(connectionListener);
             muse.registerDataListener(dataListener, MuseDataPacketType.ALPHA_ABSOLUTE);
@@ -222,23 +171,10 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
 
     }
 
-    public void onClick(View v) {
-        switch (v.getId()) {
-            case R.id.imgPlay:
-                play();
-                v.setVisibility(View.GONE);
-                break;
-            case R.id.imgStop:
-                stop();
-                v.setVisibility(View.GONE);
-                break;
-        }
-    }
-
     @Override
     public void onMoodChange(MoodClassifier.Mood nextMood) {
         if (isPlaying) {
-            showInfo("Mood: " + nextMood.name());
+            showStatusInfo("Now playing: " + nextMood.toString());
             startNewMediaPlayer(MoodMusicProvider.getMediaPath(nextMood));
         }
     }
@@ -246,20 +182,31 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
     public void play() {
         if (connectionState != ConnectionState.CONNECTED && connectionState != ConnectionState.CONNECTING) {
             connect();
-            showInfo("Trying to connect...");
+            showStatusInfo("Trying to connect...");
             return;
         }
-        showInfo("Playing music...");
+        showStatusInfo("Playing music...");
+        showInteractionInfo("- tap to stop -");
+        imgDisplayGrad.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                stop();
+            }
+        });
         isPlaying = true;
+        onMoodChange(moodClassifier.getMood());
     }
 
-    private void showInfo(final String info) {
-        if (!messageStack.isEmpty() && !messageStack.contains(info)) {
-            messageStack.add(info);
+    private void animateBrainChange(float value) {
+        imgDisplayGrad.animate().alpha(value).setDuration(100).start();
+    }
+
+    private void showStatusInfo(final String info) {
+        if (!displayInfoStack.isEmpty() && !displayInfoStack.contains(info)) {
+            displayInfoStack.add(info);
             return;
         }
-        final TextView textView = ((TextView) findViewById(R.id.txtInfo));
-        textView.animate().alpha(1).setDuration(500).setListener(new Animator.AnimatorListener() {
+        txtStatusInfo.animate().alpha(0).setDuration(500).setListener(new Animator.AnimatorListener() {
             @Override
             public void onAnimationStart(Animator animation) {
 
@@ -267,8 +214,8 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
 
             @Override
             public void onAnimationEnd(Animator animation) {
-                textView.setText(info);
-                textView.animate().alpha(0).setDuration(500).setListener(new Animator.AnimatorListener() {
+                txtStatusInfo.setText(info);
+                txtStatusInfo.animate().alpha(1).setDuration(500).setListener(new Animator.AnimatorListener() {
                     @Override
                     public void onAnimationStart(Animator animation) {
 
@@ -276,8 +223,8 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
 
                     @Override
                     public void onAnimationEnd(Animator animation) {
-                        messageStack.remove(info);
-                        if (!messageStack.isEmpty()) showInfo(messageStack.get(0));
+                        displayInfoStack.remove(info);
+                        if (!displayInfoStack.isEmpty()) showStatusInfo(displayInfoStack.get(0));
                     }
 
                     @Override
@@ -304,24 +251,21 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
         }).start();
     }
 
-    @Deprecated
-    private void stub() {
-        throw new RuntimeException("STUB!!!");
-    }
-
     public void stop() {
-        showInfo("Music is stopped");
+        isPlaying = false;
+        if (mediaPlayers.size() <= 0) showStatusInfo("music is stopped");
         for (MediaPlayer mp :
                 mediaPlayers) {
             stopMediaPlayer(mp);
         }
-        findViewById(R.id.imgStop).setVisibility(View.GONE);
-        findViewById(R.id.imgPlay).setVisibility(View.VISIBLE);
-    }
-
-    private void setIsPlayable(boolean isPlayable) {
-        findViewById(R.id.imgStop).setVisibility(isPlayable ? View.GONE : View.VISIBLE);
-        findViewById(R.id.imgPlay).setVisibility(isPlayable ? View.VISIBLE : View.GONE);
+        imgDisplayGrad.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                play();
+            }
+        });
+        showStatusInfo("Ready");
+        showInteractionInfo("- tap to start music -");
     }
 
     @Override
@@ -333,21 +277,18 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
         stop();
     }
 
-    private void ensurePermissions() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_ADMIN) != PackageManager.PERMISSION_GRANTED ||
-                ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED ||
-                ActivityCompat.checkSelfPermission(this, Manifest.permission.CAPTURE_AUDIO_OUTPUT) != PackageManager.PERMISSION_GRANTED)
-            ActivityCompat.requestPermissions(MainActivity.this,
-                    new String[]{Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.BLUETOOTH_ADMIN, Manifest.permission.CAPTURE_AUDIO_OUTPUT},
-                    0);
+    private void checkPermission(String permission, int checkId) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_ADMIN) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(MainActivity.this, new String[]{permission},
+                    checkId);
+
+        }
     }
 
-    public void museListChanged() {
-        final List<Muse> list = manager.getMuses();
-        spinnerAdapter.clear();
-        for (Muse m : list) {
-            spinnerAdapter.add(m.getName());
-        }
+    private void ensurePermissions() {
+        checkPermission(Manifest.permission.BLUETOOTH_ADMIN, 10);
+        checkPermission(Manifest.permission.CAPTURE_AUDIO_OUTPUT, 11);
+        checkPermission(Manifest.permission.ACCESS_COARSE_LOCATION, 12);
     }
 
     public void receiveMuseConnectionPacket(final MuseConnectionPacket p, final Muse muse) {
@@ -358,29 +299,47 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
         final String status = p.getPreviousConnectionState() + " -> " + connectionState;
         Log.i(TAG, status);
 
-        // Update the UI with the change in connection state.
-        handler.post(new Runnable() {
-            @Override
-            public void run() {
-                stop();
-                showInfo(status);
-            }
-        });
-
         if (connectionState == ConnectionState.DISCONNECTED) {
+            if (connHandler != null) {
+                connHandler.removeCallbacks(connectRunnable);
+            }
+            connHandler = new Handler();
+            connHandler.postDelayed(connectRunnable, 1000);
+            connect();
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    findViewById(R.id.deviceSpinner).setVisibility(View.VISIBLE);
-                    setIsPlayable(true);
+                    reconnectCount++;
+                    showStatusInfo("Connecting, please wait...");
+                    if (reconnectCount > RECONNECT_PROMPT) {
+                        showInteractionInfo("- try to restart the device -");
+                    }
+
                 }
             });
             this.muse = null;
         }
 
-        if (connectionState == ConnectionState.CONNECTED) {
-            findViewById(R.id.deviceSpinner).setVisibility(View.GONE);
-            setIsPlayable(true);
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (connectionState == ConnectionState.CONNECTED) {
+                    reconnectCount = 0;
+                    setIsLoading(false);
+                    showStatusInfo("Connected");
+                    stop();
+                } else {
+                    setIsLoading(true);
+                }
+            }
+        });
+    }
+
+    private void setIsLoading(boolean isLoading) {
+        if (isLoading) {
+            loadingIndicatorView.smoothToShow();
+        } else {
+            loadingIndicatorView.smoothToHide();
         }
     }
 
@@ -391,34 +350,38 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
                     if (isGood)
                         alphaValue = getChannelValue(p);
                     collectSignal(alphaValue, p.packetType());
-                    alphaStale = true;
                     break;
                 case BETA_ABSOLUTE:
                     if (isGood)
                         betaValue = getChannelValue(p);
                     collectSignal(betaValue, p.packetType());
-                    betaStale = true;
                     break;
                 case DELTA_ABSOLUTE:
                     if (isGood)
                         deltaValue = getChannelValue(p);
                     collectSignal(deltaValue, p.packetType());
-                    deltaStale = true;
                     break;
                 case GAMMA_ABSOLUTE:
                     if (isGood)
                         gammaValue = getChannelValue(p);
                     collectSignal(gammaValue, p.packetType());
-                    gammaStale = true;
                     break;
                 case THETA_ABSOLUTE:
                     if (isGood)
                         thetaValue = getChannelValue(p);
                     collectSignal(thetaValue, p.packetType());
-                    thetaStale = true;
                     break;
                 case IS_GOOD:
-                    isGood = (p.values().get(0) > .5);
+                    boolean newIsGood = (p.values().get(0) > .5);
+                    if (newIsGood != isGood) {
+                        isGood = newIsGood;
+                        if (!isGood) {
+                            previousInterInfo = txtInteractionInfo.getText().toString();
+                            showInteractionInfo("- please adjust the device -");
+                        } else {
+                            showInteractionInfo(previousInterInfo);
+                        }
+                    }
                     break;
                 case BATTERY:
                     for (double value :
@@ -433,6 +396,13 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
             e.printStackTrace();
             throw e;
         }
+    }
+
+    public void showInteractionInfo(String interactionInfo) {
+        if (txtInteractionInfo.getText().equals("- please adjust the device -")) {
+            previousInterInfo = interactionInfo;
+        }
+        txtInteractionInfo.setText(interactionInfo);
     }
 
     @Nullable
@@ -487,11 +457,18 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
     }
 
     private void stopMediaPlayer(final MediaPlayer mediaPlayer) {
-        stopMediaPlayer(mediaPlayer, false);
+        try {
+            stopMediaPlayer(mediaPlayer, false);
+        } catch (IllegalStateException ise) {
+            showStatusInfo("Illegal state reached, please restart");
+        }
     }
 
     private void stopMediaPlayer(final MediaPlayer mediaPlayer, boolean isRemoved) {
-        if (!isRemoved) mediaPlayers.remove(mediaPlayer);
+        if (!isRemoved) {
+            if(!mediaPlayers.remove(mediaPlayer))
+            return;
+        }
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -558,43 +535,29 @@ public class MainActivity extends AppCompatActivity implements MoodClassifier.Mo
     private void initUI() {
         setContentView(R.layout.activity_main);
 
-        audioVisualization = (AudioVisualization) findViewById(R.id.visualizer);
+        loadingIndicatorView = (AVLoadingIndicatorView) findViewById(R.id.avi);
+        txtStatusInfo = (TextView) findViewById(R.id.txtStatusInfo);
+        txtInteractionInfo = (TextView) findViewById(R.id.txtInteractionInfo);
+        imgDisplayGrad = (ImageView) findViewById(R.id.imgDisplayGrad);
 
-        spinnerAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item);
-        Spinner musesSpinner = (Spinner) findViewById(R.id.deviceSpinner);
-        musesSpinner.setAdapter(spinnerAdapter);
-    }
-
-    private void updateAlpha() {
-        ((BubbleView) findViewById(R.id.alphaBubble)).setSize(alphaValue.floatValue());
-    }
-
-    private void updateBeta() {
-        ((BubbleView) findViewById(R.id.betaBubble)).setSize(betaValue.floatValue());
-    }
-
-    private void updateDelta() {
-        ((BubbleView) findViewById(R.id.deltaBubble)).setSize(deltaValue.floatValue());
-    }
-
-    private void updateGamma() {
-        ((BubbleView) findViewById(R.id.gammaBubble)).setSize(gammaValue.floatValue());
-    }
-
-    private void updateTheta() {
-        ((BubbleView) findViewById(R.id.thetaBubble)).setSize(thetaValue.floatValue());
+        MaterialRippleLayout.on(imgDisplayGrad)
+                .rippleColor(Color.LTGRAY)
+                .rippleDuration(100)
+                .create();
+        loadingIndicatorView.hide();
+        imgDisplayGrad.animate().alpha(0).setDuration(200).start();
     }
 
     class MuseL extends MuseListener {
-        final WeakReference<MainActivity> activityRef;
 
-        MuseL(final WeakReference<MainActivity> activityRef) {
-            this.activityRef = activityRef;
+        MuseL() {
+
         }
 
         @Override
         public void museListChanged() {
-            activityRef.get().museListChanged();
+            if (connectionState != ConnectionState.CONNECTED)
+                connect();
         }
     }
 
